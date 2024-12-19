@@ -150,21 +150,18 @@ export default function Playground({
   const lastSentSlide = useRef<number | null>(null);
 
   // Data channel setup with DataPacket_Kind
-  const { send } = useDataChannel("slide_updates", {
-    onMessage: (message) => {
-      console.log("Received message on slide_updates channel:", message);
-      try {
-        const decoded = JSON.parse(new TextDecoder().decode(message));
-        if (decoded.type === "SCRIPTS_UPDATED") {
-          // Refresh scripts if needed
-          loadInitialScripts();
-        }
-      } catch (error) {
-        console.error("Error processing data channel message:", error);
+  const { send } = useDataChannel<"slide_updates">((message) => {
+    console.log("Received message on slide_updates channel:", message);
+    try {
+      const decoded = JSON.parse(new TextDecoder().decode(message));
+      if (decoded.type === "SCRIPTS_UPDATED") {
+        // Refresh scripts if needed
+        loadInitialScripts();
       }
-    },
-    reliable: true
-  });
+    } catch (error) {
+      console.error("Error processing data channel message:", error);
+    }
+  }, "slide_updates");
 
   // Add brdgeMetadata state
   const [brdgeMetadata, setBrdgeMetadata] = useState<BrdgeMetadata | null>(null);
