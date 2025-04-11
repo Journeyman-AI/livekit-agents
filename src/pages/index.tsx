@@ -8,6 +8,9 @@ import { Inter } from "next/font/google";
 import Head from "next/head";
 import dynamic from 'next/dynamic';
 import { useCallback, useState, useEffect, useMemo } from "react";
+import { ConnectionState, Room } from "livekit-client";
+import { jwtDecode } from "jwt-decode";
+import { useConnectionState } from "@livekit/components-react";
 
 import { PlaygroundConnect } from "@/components/PlaygroundConnect";
 import Playground from "@/components/playground/Playground";
@@ -56,14 +59,21 @@ export default function Home() {
 }
 
 export function HomeInner() {
-  const { shouldConnect, wsUrl, token: livekitToken, mode, connect, disconnect } =
-    useConnection();
+  const {
+    shouldConnect,
+    wsUrl,
+    token: livekitToken,
+    mode,
+    connect,
+    disconnect,
+  } = useConnection();
 
   const { config } = useConfig();
   const { toastMessage, setToastMessage } = useToast();
   const [isMobile, setIsMobile] = useState(false);
   const [urlParams, setUrlParams] = useState<{ brdgeId: string | null; agentType?: 'edit' | 'view'; userId?: string }>({ brdgeId: null, agentType: 'edit' });
-  const [authToken, setAuthTokenState] = useState<string | null>(null);
+  const [authTokenState, setAuthTokenState] = useState<string | null>(null);
+  const [isReadyToConnect, setIsReadyToConnect] = useState(false);
   const [orientation, setOrientation] = useState<'portrait' | 'landscape'>('portrait');
   const [showRotationPrompt, setShowRotationPrompt] = useState(false);
 
@@ -75,11 +85,14 @@ export function HomeInner() {
       const userIdParam = searchParams.get('userId');
       const agentTypeParam = searchParams.get('agentType') as 'edit' | 'view'; // Read agentType
 
-      setUrlParams({
+      const newParams = {
         brdgeId: brdgeIdParam,
         userId: userIdParam || undefined,
         agentType: agentTypeParam || 'edit' // Default to edit if not specified
-      });
+      };
+
+      console.log('[index.tsx] URL Params Effect: Setting params:', newParams);
+      setUrlParams(newParams);
 
       // Function to check if device is mobile
       const checkMobile = () => {
@@ -112,61 +125,59 @@ export function HomeInner() {
     }
   }, []);
 
-  // Effect to listen for AUTH_TOKEN from parent window
+  // Effect to listen for AUTH_TOKEN
   useEffect(() => {
-    console.log("Setting up postMessage listener for AUTH_TOKEN");
-
+    console.log("[index.tsx] Setting up postMessage listener for AUTH_TOKEN");
     const handleMessage = (event: MessageEvent) => {
-      // Log all incoming messages for debugging
-      console.log("Message received:", {
-        origin: event.origin,
-        type: event.data?.type,
-        hasToken: !!event.data?.token
-      });
-
-      // TEMPORARY: For testing, accept messages from any origin
-      // WARNING: This is not secure for production!
       if (event.data && event.data.type === 'AUTH_TOKEN' && typeof event.data.token === 'string') {
-        console.log('AUTH_TOKEN received from:', event.origin);
-
-        // Update React state
+        console.log('[index.tsx] AUTH_TOKEN received:', event.data.token ? 'Exists' : 'Missing');
         setAuthTokenState(event.data.token);
-
-        // Update API module
         setAuthToken(event.data.token);
-
-        // Verify token was set
-        console.log("Token set in state and API module");
+        console.log("[index.tsx] Token set in state and API module");
       }
     };
-
     window.addEventListener('message', handleMessage);
-
-    // Log to confirm listener is active
-    console.log("PostMessage listener active");
-
-    // Cleanup: remove the listener when the component unmounts
+    console.log("[index.tsx] PostMessage listener active");
     return () => {
-      console.log("Removing postMessage listener");
+      console.log("[index.tsx] Removing postMessage listener");
       window.removeEventListener('message', handleMessage);
       setAuthToken(null);
     };
-  }, []); // Empty dependency array means this effect runs once on mount
+  }, []);
 
-  const handleConnect = useCallback(
-    async (c: boolean, mode: ConnectionMode) => {
-      if (c) {
-        if (typeof urlParams.brdgeId === 'string') { // Use urlParams.brdgeId
-          connect(mode, urlParams.brdgeId, urlParams.userId);
-        } else {
-          connect(mode);
+  // Effect to determine readiness and trigger connection
+  useEffect(() => {
+    const isEditMode = urlParams.agentType === 'edit';
+    const hasRequiredParams = !!(urlParams.brdgeId);
+    const hasRequiredToken = isEditMode ? !!authTokenState : true;
+
+    console.log(`[index.tsx] Readiness Check: Mode=${urlParams.agentType}, ParamsSet=${hasRequiredParams}, TokenNeeded=${isEditMode}, TokenReceived=${!!authTokenState}, HasRequiredToken=${hasRequiredToken}`);
+
+    if (hasRequiredParams && hasRequiredToken && !shouldConnect) {
+      console.log('[index.tsx] ALL PREREQUISITES MET & Not connecting yet. Calling connect().');
+      setIsReadyToConnect(true);
+
+      let finalUserId = urlParams.userId;
+      if (isEditMode && authTokenState) {
+        try {
+          finalUserId = jwtDecode<{ sub: string }>(authTokenState).sub;
+        } catch (e) {
+          console.error("[index.tsx] Error decoding authTokenState:", e);
+          finalUserId = `error_user_${Date.now()}`;
         }
-      } else {
-        disconnect();
+      } else if (!finalUserId) {
+        finalUserId = `anon_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
       }
-    },
-    [connect, disconnect, urlParams.brdgeId, urlParams.userId] // Use urlParams values
-  );
+      console.log(`[index.tsx] Determined finalUserId: ${finalUserId}`);
+
+      const connectMode: ConnectionMode = process.env.NEXT_PUBLIC_LIVEKIT_URL ? "env" : "manual";
+      connect(connectMode, urlParams.brdgeId!, finalUserId);
+    } else if (!hasRequiredParams || !hasRequiredToken) {
+      console.log('[index.tsx] Prerequisites not met for connection.');
+    } else if (shouldConnect) {
+      console.log('[index.tsx] Connection attempt already initiated (shouldConnect is true).');
+    }
+  }, [urlParams, authTokenState, connect, shouldConnect]);
 
   const showPG = useMemo(() => {
     if (process.env.NEXT_PUBLIC_LIVEKIT_URL) {
@@ -293,54 +304,67 @@ export function HomeInner() {
           )}
         </AnimatePresence>
         {showPG ? (
-          <LiveKitRoom
-            className="flex flex-col"
-            style={{
-              height: '100%',
-              width: '100%',
-              overflow: 'hidden'
-            }}
-            serverUrl={wsUrl}
-            token={livekitToken}
-            connect={shouldConnect}
-            onError={(e) => {
-              setToastMessage({ message: e.message, type: "error" });
-              console.error(e);
-            }}
-          >
-            {isMobile ? (
-              <MobilePlayground
-                themeColors={themeColors}
-                onConnect={(c) => {
-                  const m = process.env.NEXT_PUBLIC_LIVEKIT_URL ? "env" : mode;
-                  handleConnect(c, m);
-                }}
-                agentType={urlParams?.agentType}
-                brdgeId={urlParams.brdgeId}
-                authToken={authToken}
-                userId={urlParams?.userId}
-              />
-            ) : (
-              <Playground
-                themeColors={themeColors}
-                onConnect={(c) => {
-                  const m = process.env.NEXT_PUBLIC_LIVEKIT_URL ? "env" : mode;
-                  handleConnect(c, m);
-                }}
-                agentType={urlParams?.agentType}
-                userId={urlParams?.userId}
-                brdgeId={urlParams.brdgeId}
-                authToken={authToken}
-              />
-            )}
-            <RoomAudioRenderer />
-            <StartAudio label="Click to enable audio playback" />
-          </LiveKitRoom>
+          <>
+            <LiveKitRoom
+              className="flex flex-col"
+              style={{
+                height: '100%',
+                width: '100%',
+                overflow: 'hidden'
+              }}
+              serverUrl={wsUrl}
+              token={livekitToken}
+              connect={shouldConnect}
+              onError={(e) => {
+                setToastMessage({ message: e.message, type: "error" });
+                console.error(e);
+              }}
+            >
+              {isMobile ? (
+                <MobilePlayground
+                  onConnect={(c) => {
+                    if (!c) disconnect();
+                  }}
+                  themeColors={themeColors}
+                  agentType={urlParams?.agentType}
+                  brdgeId={urlParams.brdgeId}
+                  authToken={authTokenState}
+                  userId={urlParams?.userId}
+                />
+              ) : (
+                <Playground
+                  onConnect={(c) => {
+                    if (!c) disconnect();
+                  }}
+                  themeColors={themeColors}
+                  agentType={urlParams?.agentType}
+                  userId={urlParams?.userId}
+                  brdgeId={urlParams.brdgeId}
+                  authToken={authTokenState}
+                />
+              )}
+              <RoomAudioRenderer />
+              <StartAudio label="Click to enable audio playback" />
+            </LiveKitRoom>
+          </>
         ) : (
           <PlaygroundConnect
             accentColor={themeColors[0]}
             onConnectClicked={(mode) => {
-              handleConnect(true, mode);
+              console.log(`[index.tsx] PlaygroundConnect clicked, attempting connect(${mode})`);
+              const isEditMode = urlParams.agentType === 'edit';
+              const hasRequiredParams = !!(urlParams.brdgeId);
+              const hasRequiredToken = isEditMode ? !!authTokenState : true;
+              if (hasRequiredParams && hasRequiredToken) {
+                let finalUserId = authTokenState ? jwtDecode<{ sub: string }>(authTokenState).sub : urlParams.userId || `anon_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+                connect(mode, urlParams.brdgeId!, finalUserId);
+              } else {
+                console.warn("[index.tsx] PlaygroundConnect clicked, but prerequisites not met.");
+                setToastMessage({
+                  message: "Cannot connect yet, waiting for parameters or authentication...",
+                  type: "info",
+                });
+              }
             }}
           />
         )}

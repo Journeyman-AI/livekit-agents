@@ -424,14 +424,14 @@ export default function PlaygroundMobile({
     };
 
     // LiveKit connection - connect once when brdgeId becomes available
-    useEffect(() => {
-        // Only attempt connection if we have the necessary IDs and are disconnected
-        const canAutoConnect = params.userId && params.brdgeId;
-        if (canAutoConnect && roomState === ConnectionState.Disconnected) {
-            console.log("Mobile: Attempting auto-connect based on params and state.");
-            onConnect(true);
-        }
-    }, [params.userId, params.brdgeId, roomState, onConnect]); // Depend on roomState too
+    // useEffect(() => {
+    //     // Only attempt connection if we have the necessary IDs and are disconnected
+    //     const canAutoConnect = params.userId && params.brdgeId;
+    //     if (canAutoConnect && roomState === ConnectionState.Disconnected) {
+    //         console.log("Mobile: Attempting auto-connect based on params and state.");
+    //         onConnect(true);
+    //     }
+    // }, [params.userId, params.brdgeId, roomState, onConnect]); // Depend on roomState too
 
     // Log connection state changes
     useEffect(() => {
