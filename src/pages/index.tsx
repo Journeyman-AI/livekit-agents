@@ -317,7 +317,7 @@ export function HomeInner() {
                 }}
                 agentType={urlParams?.agentType}
                 brdgeId={urlParams.brdgeId}
-                authToken={authToken || undefined}
+                authToken={authToken}
                 userId={urlParams?.userId}
               />
             ) : (

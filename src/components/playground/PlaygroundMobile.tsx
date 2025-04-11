@@ -21,7 +21,7 @@ import { api } from '@/api';
 import { jwtDecode } from "jwt-decode";
 import { MobileVideoPlayer } from './mobile/MobileVideoPlayer';
 import { MobileProgressBar } from './mobile/MobileProgressBar';
-import { MessageSquare, ClipboardList, User, Radio, Share2, Square, Send, Mic, MicOff, Plus, Edit2, Trash2, ChevronRight, Save, Info, Lock, Globe, Copy, Check, ExternalLink, Volume2, VolumeX, X, Loader2 } from 'lucide-react';
+import { MessageSquare, ClipboardList, User, Radio, Share2, Square, Send, Mic, MicOff, Plus, Edit2, Trash2, ChevronRight, Save, Info, Lock, Globe, Copy, Check, ExternalLink, Volume2, VolumeX, X, Loader2, Play, AlertCircle } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 
 // Our EngagementOpportunity interface definition
@@ -183,9 +183,6 @@ export default function PlaygroundMobile({
 
     // Add MobileTab state for navigation
     const [activeMobileTab, setActiveMobileTab] = useState<'chat' | 'engagement' | 'teaching-persona' | 'voice-clone' | 'share'>('chat');
-
-    // Track if we've already connected to avoid multiple connection attempts
-    const hasConnected = useRef(false);
 
     // Add component mount state tracking
     const isMounted = useRef(false);
@@ -428,18 +425,17 @@ export default function PlaygroundMobile({
 
     // LiveKit connection - connect once when brdgeId becomes available
     useEffect(() => {
-        // Only connect if we have a brdgeId and haven't connected yet
-        if (params.brdgeId && !hasConnected.current) {
-            console.log("Initial connection to LiveKit with brdgeId:", params.brdgeId);
-            hasConnected.current = true;
-            // Let parent component handle the connection
+        // Only attempt connection if we have the necessary IDs and are disconnected
+        const canAutoConnect = params.userId && params.brdgeId;
+        if (canAutoConnect && roomState === ConnectionState.Disconnected) {
+            console.log("Mobile: Attempting auto-connect based on params and state.");
             onConnect(true);
         }
-    }, [params.brdgeId, onConnect]); // Only re-run when brdgeId changes
+    }, [params.userId, params.brdgeId, roomState, onConnect]); // Depend on roomState too
 
     // Log connection state changes
     useEffect(() => {
-        console.log('LiveKit connection state:', roomState);
+        console.log('Mobile LiveKit connection state:', roomState);
 
         if (roomState === ConnectionState.Connected) {
             console.log('Successfully connected to LiveKit room');
@@ -484,13 +480,29 @@ export default function PlaygroundMobile({
         // Cleanup function to disconnect when component unmounts
         return () => {
             isMounted.current = false;
+            // --- REMOVE explicit disconnect ---
             // Only disconnect if we previously connected
-            if (hasConnected.current) {
-                console.log("Disconnecting from LiveKit on unmount");
-                onConnect(false);
-            }
+            // if (hasConnected.current) {
+            //   console.log("Disconnecting from LiveKit on unmount");
+            //   onConnect(false);
+            // }
+            // --- END REMOVAL ---
         };
     }, []); // Empty dependency array means this only runs on mount/unmount
+
+    // --- ADD handleConnect function ---
+    const handleConnect = useCallback(async () => {
+        if (roomState === ConnectionState.Connected) {
+            console.log("Mobile: Manually disconnecting.");
+            onConnect(false);
+        } else if (roomState === ConnectionState.Disconnected || roomState === ConnectionState.Reconnecting) {
+            // Allow connection attempt if disconnected or trying to reconnect
+            console.log("Mobile: Manually connecting.");
+            onConnect(true);
+        } else {
+            console.log(`Mobile: Cannot manually connect/disconnect in state: ${roomState}`);
+        }
+    }, [roomState, onConnect]);
 
     const lastSentTimestampRef = useRef<number | null>(null);
 
